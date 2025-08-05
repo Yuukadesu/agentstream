@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import threading
 from typing import Dict, Any
 from function_stream import FSFunction, FSContext, FSModule, SourceSpec, PulsarSourceConfig
 from google.adk import Agent, Runner
@@ -14,7 +15,36 @@ import _jsonnet
 import os
 from config import AgentConfig
 from json_repair import repair_json
+from prometheus_client import Counter, start_http_server
 
+GLOBAL_TOKEN_COUNTER = {
+    "prompt_tokens": 0,
+    "candidates_tokens": 0,
+    "cache_tokens": 0,
+    "total_tokens": 0
+}
+
+def get_tokens():
+    return GLOBAL_TOKEN_COUNTER
+
+# Prometheus Counter metrics
+PROMPT_TOKENS_COUNTER = Counter('prompt_tokens_total', 'Total prompt tokens')
+CANDIDATES_TOKENS_COUNTER = Counter('candidates_tokens_total', 'Total candidates tokens')
+CACHE_TOKENS_COUNTER = Counter('cache_tokens_total', 'Total cache tokens')
+TOTAL_TOKENS_COUNTER = Counter('total_tokens_total', 'Total tokens')
+
+# init Prometheus Counter metrics
+PROMPT_TOKENS_COUNTER.inc(0)
+CANDIDATES_TOKENS_COUNTER.inc(0)
+CACHE_TOKENS_COUNTER.inc(0)
+TOTAL_TOKENS_COUNTER.inc(0)
+
+#start Prometheus metrics server
+def start_prometheus_server():
+    start_http_server(8000)
+    print("Prometheus metrics server started on :8000")
+
+threading.Thread(target=start_prometheus_server, daemon=True).start()
 
 def repair_json_output(text: str) -> str:
     """
@@ -127,6 +157,23 @@ class AgentFunction(FSModule):
         final_response = None
         agent_event_generator = self.runner.run_async(user_id=user_id, session_id=session_id, new_message=content)
         async for event in agent_event_generator:
+            if hasattr(event, "usage_metadata") and event.usage_metadata:
+                prompt_inc = getattr(event.usage_metadata, "prompt_token_count", 0)
+                candidates_inc = getattr(event.usage_metadata, "candidates_token_count", 0)
+                cache_inc = getattr(event.usage_metadata, "cache_token_count", 0)
+                total_inc = getattr(event.usage_metadata, "total_token_count", 0)
+
+                # Update global token counter
+                GLOBAL_TOKEN_COUNTER["prompt_tokens"] += prompt_inc
+                GLOBAL_TOKEN_COUNTER["candidates_tokens"] += candidates_inc
+                GLOBAL_TOKEN_COUNTER["cache_tokens"] += cache_inc
+                GLOBAL_TOKEN_COUNTER["total_tokens"] += total_inc
+
+                # Update Prometheus counters
+                PROMPT_TOKENS_COUNTER.inc(prompt_inc)
+                CANDIDATES_TOKENS_COUNTER.inc(candidates_inc)
+                CACHE_TOKENS_COUNTER.inc(cache_inc)
+                TOTAL_TOKENS_COUNTER.inc(total_inc)
             if event.is_final_response():
                 final_response = event.content.parts[0].text
                 break
