@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import threading
 from typing import Dict, Any
 from function_stream import FSFunction, FSContext, FSModule, SourceSpec, PulsarSourceConfig
 from google.adk import Agent, Runner
@@ -19,9 +18,6 @@ from prometheus_client import Counter, make_asgi_app
 import uvicorn
 from contextlib import suppress
 
-# Thread lock for protecting global token counter
-TOKEN_COUNTER_LOCK = threading.Lock()
-
 GLOBAL_TOKEN_COUNTER = {
     "prompt_tokens": 0,
     "candidates_tokens": 0,
@@ -30,9 +26,7 @@ GLOBAL_TOKEN_COUNTER = {
 }
 
 def get_tokens():
-    """Get current token counts with thread safety"""
-    with TOKEN_COUNTER_LOCK:
-        return GLOBAL_TOKEN_COUNTER.copy()  # Return a copy to avoid external modification
+    return GLOBAL_TOKEN_COUNTER.copy()
 
 # Prometheus Counter metrics
 PROMPT_TOKENS_COUNTER = Counter('prompt_tokens_total', 'Total prompt tokens')
@@ -173,11 +167,10 @@ class AgentFunction(FSModule):
                 cache_inc = token_incs["cache_tokens"]
                 total_inc = token_incs["total_tokens"]
 
-                with TOKEN_COUNTER_LOCK:
-                    GLOBAL_TOKEN_COUNTER["prompt_tokens"] += prompt_inc
-                    GLOBAL_TOKEN_COUNTER["candidates_tokens"] += candidates_inc
-                    GLOBAL_TOKEN_COUNTER["cache_tokens"] += cache_inc
-                    GLOBAL_TOKEN_COUNTER["total_tokens"] += total_inc
+                GLOBAL_TOKEN_COUNTER["prompt_tokens"] += prompt_inc
+                GLOBAL_TOKEN_COUNTER["candidates_tokens"] += candidates_inc
+                GLOBAL_TOKEN_COUNTER["cache_tokens"] += cache_inc
+                GLOBAL_TOKEN_COUNTER["total_tokens"] += total_inc
 
                 PROMPT_TOKENS_COUNTER.inc(prompt_inc)
                 CANDIDATES_TOKENS_COUNTER.inc(candidates_inc)
